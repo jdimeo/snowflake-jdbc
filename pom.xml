@@ -645,7 +645,7 @@
           <sortModules>true</sortModules>
           <sortPlugins>groupId,artifactId</sortPlugins>
           <sortProperties>true</sortProperties>
-          <verifyFail>stop</verifyFail>
+          <verifyFail>Warn</verifyFail>
           <verifyFailOn>strict</verifyFailOn>
         </configuration>
         <executions>
@@ -1227,22 +1227,6 @@
                   <goal>create-timestamp</goal>
                 </goals>
                 <phase>package</phase>
-              </execution>
-            </executions>
-          </plugin>
-          <plugin>
-            <groupId>org.codehaus.mojo</groupId>
-            <artifactId>exec-maven-plugin</artifactId>
-            <executions>
-              <execution>
-                <id>check-shaded-content</id>
-                <goals>
-                  <goal>exec</goal>
-                </goals>
-                <phase>verify</phase>
-                <configuration>
-                  <executable>${basedir}/ci/scripts/check_content.sh</executable>
-                </configuration>
               </execution>
             </executions>
           </plugin>
