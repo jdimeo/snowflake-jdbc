@@ -84,6 +84,7 @@ public class SessionUtil {
   public static final String CLIENT_MEMORY_LIMIT_JVM = "net.snowflake.jdbc.clientMemoryLimit";
   public static final String CLIENT_MEMORY_LIMIT = "CLIENT_MEMORY_LIMIT";
   public static final String QUERY_CONTEXT_CACHE_SIZE = "QUERY_CONTEXT_CACHE_SIZE";
+  public static final String JDBC_ENABLE_PUT_GET = "JDBC_ENABLE_PUT_GET";
   public static final String CLIENT_PREFETCH_THREADS_JVM =
       "net.snowflake.jdbc.clientPrefetchThreads";
   public static final String CLIENT_PREFETCH_THREADS = "CLIENT_PREFETCH_THREADS";
@@ -418,6 +419,8 @@ public class SessionUtil {
 
     try {
       ClientAuthnDTO authnData = new ClientAuthnDTO();
+      authnData.setInFlightCtx(loginInput.getInFlightCtx());
+
       Map<String, Object> data = new HashMap<>();
       data.put(ClientAuthnParameter.CLIENT_APP_ID.name(), loginInput.getAppId());
 
@@ -552,6 +555,8 @@ public class SessionUtil {
         clientEnv.put(SFSessionProperty.TRACING.getPropertyKey(), tracingLevel);
       }
 
+      clientEnv.put("JDBC_JAR_NAME", SnowflakeDriver.getJdbcJarname());
+
       data.put(ClientAuthnParameter.CLIENT_ENVIRONMENT.name(), clientEnv);
 
       // Initialize the session parameters
@@ -584,6 +589,10 @@ public class SessionUtil {
       String json = mapper.writeValueAsString(authnData);
 
       postRequest = new HttpPost(loginURI);
+
+      // Add custom headers before adding common headers
+      HttpUtil.applyAdditionalHeadersForSnowsight(
+          postRequest, loginInput.getAdditionalHttpHeadersForSnowsight());
 
       // attach the login info json body to the post request
       StringEntity input = new StringEntity(json, StandardCharsets.UTF_8);
@@ -894,6 +903,10 @@ public class SessionUtil {
       uriBuilder.addParameter(SFSession.SF_QUERY_REQUEST_ID, UUIDUtils.getUUID().toString());
 
       postRequest = new HttpPost(uriBuilder.build());
+
+      // Add custom headers before adding common headers
+      HttpUtil.applyAdditionalHeadersForSnowsight(
+          postRequest, loginInput.getAdditionalHttpHeadersForSnowsight());
     } catch (URISyntaxException ex) {
       logger.error("Exception when creating http request", ex);
 
@@ -1005,6 +1018,10 @@ public class SessionUtil {
       uriBuilder.setPath(SF_PATH_SESSION);
 
       postRequest = new HttpPost(uriBuilder.build());
+
+      // Add custom headers before adding common headers
+      HttpUtil.applyAdditionalHeadersForSnowsight(
+          postRequest, loginInput.getAdditionalHttpHeadersForSnowsight());
 
       postRequest.setHeader(
           SF_HEADER_AUTHORIZATION,
@@ -1532,6 +1549,10 @@ public class SessionUtil {
       } else if (QUERY_CONTEXT_CACHE_SIZE.equalsIgnoreCase(entry.getKey())) {
         if (session != null) {
           session.setQueryContextCacheSize((int) entry.getValue());
+        }
+      } else if (JDBC_ENABLE_PUT_GET.equalsIgnoreCase(entry.getKey())) {
+        if (session != null) {
+          session.setJdbcEnablePutGet(SFLoginInput.getBooleanValue(entry.getValue()));
         }
       } else {
         if (session != null) {

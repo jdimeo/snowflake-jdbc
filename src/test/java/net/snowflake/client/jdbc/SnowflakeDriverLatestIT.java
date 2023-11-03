@@ -416,6 +416,17 @@ public class SnowflakeDriverLatestIT extends BaseJDBCTest {
         "server URL in form of <protocol>://<host or domain>:<port number>/<path of resource>",
         info[0].description);
 
+    // Test with null URL and no properties. ServerURL is needed.
+    url = null;
+    props = new Properties();
+    driver = DriverManager.getDriver("jdbc:snowflake://snowflake.reg.local:8082");
+    info = driver.getPropertyInfo(url, props);
+    assertEquals(1, info.length);
+    assertEquals("serverURL", info[0].name);
+    assertEquals(
+        "server URL in form of <protocol>://<host or domain>:<port number>/<path of resource>",
+        info[0].description);
+
     // Test with URL that requires username and password.
     url = "jdbc:snowflake://snowflake.reg.local:8082";
     info = driver.getPropertyInfo(url, props);
@@ -531,6 +542,85 @@ public class SnowflakeDriverLatestIT extends BaseJDBCTest {
         assertTrue(FileUtils.contentEqualsIgnoreEOL(file1, unzipped, null));
       } finally {
         statement.execute("DROP TABLE IF EXISTS testLoadToLocalFS");
+        statement.close();
+      }
+    }
+  }
+
+  /**
+   * Tests PUT disable test
+   *
+   * @throws Throwable
+   */
+  @Test
+  @ConditionalIgnoreRule.ConditionalIgnore(condition = RunningOnGithubAction.class)
+  public void testPutDisable() throws Throwable {
+    Connection connection = null;
+    Statement statement = null;
+
+    // create a file
+    File file = tmpFolder.newFile("testfile99.csv");
+    BufferedWriter bw = new BufferedWriter(new FileWriter(file));
+    bw.write("This content won't be uploaded as PUT is disabled.");
+    bw.close();
+
+    String sourceFilePathOriginal = file.getCanonicalPath();
+
+    Properties paramProperties = new Properties();
+    paramProperties.put("enablePutGet", false);
+
+    List<String> accounts = Arrays.asList(null, "s3testaccount", "azureaccount", "gcpaccount");
+    for (int i = 0; i < accounts.size(); i++) {
+      try {
+        connection = getConnection(accounts.get(i), paramProperties);
+
+        statement = connection.createStatement();
+
+        statement.execute("PUT file://" + sourceFilePathOriginal + " @testPutGet_disable_stage");
+
+        assertTrue("Shouldn't come here", false);
+      } catch (Exception ex) {
+        // Expected
+        assertTrue(ex.getMessage().equalsIgnoreCase("File transfers have been disabled."));
+      } finally {
+        statement.close();
+      }
+    }
+  }
+
+  /**
+   * Tests GET disable test
+   *
+   * @throws Throwable
+   */
+  @Test
+  @ConditionalIgnoreRule.ConditionalIgnore(condition = RunningOnGithubAction.class)
+  public void testGetDisable() throws Throwable {
+    Connection connection = null;
+    Statement statement = null;
+
+    // create a folder
+    File destFolder = tmpFolder.newFolder();
+    String destFolderCanonicalPath = destFolder.getCanonicalPath();
+
+    Properties paramProperties = new Properties();
+    paramProperties.put("enablePutGet", false);
+
+    List<String> accounts = Arrays.asList(null, "s3testaccount", "azureaccount", "gcpaccount");
+    for (int i = 0; i < accounts.size(); i++) {
+      try {
+        connection = getConnection(accounts.get(i), paramProperties);
+
+        statement = connection.createStatement();
+
+        statement.execute(
+            "GET @testPutGet_disable_stage 'file://" + destFolderCanonicalPath + "' parallel=8");
+
+        assertTrue("Shouldn't come here", false);
+      } catch (Exception ex) {
+        // Expected
+        assertTrue(ex.getMessage().equalsIgnoreCase("File transfers have been disabled."));
+      } finally {
         statement.close();
       }
     }
@@ -1570,6 +1660,78 @@ public class SnowflakeDriverLatestIT extends BaseJDBCTest {
   @Test
   @ConditionalIgnoreRule.ConditionalIgnore(condition = RunningOnGithubAction.class)
   public void testHTAPOptimizations() throws SQLException {
+    try {
+      // Set the HTAP test parameter to true
+      try (Connection con = getSnowflakeAdminConnection();
+          Statement statement = con.createStatement()) {
+        statement.execute(
+            "alter account "
+                + TestUtil.systemGetEnv("SNOWFLAKE_TEST_ACCOUNT")
+                + " set ENABLE_SNOW_654741_FOR_TESTING=true");
+      }
+      // Create a normal connection and assert that database, schema, and warehouse have expected
+      // values
+      try (Connection con = getConnection()) {
+        SFSession session = con.unwrap(SnowflakeConnectionV1.class).getSfSession();
+        assertTrue(
+            TestUtil.systemGetEnv("SNOWFLAKE_TEST_SCHEMA").equalsIgnoreCase(con.getSchema()));
+        assertTrue(
+            TestUtil.systemGetEnv("SNOWFLAKE_TEST_DATABASE").equalsIgnoreCase(con.getCatalog()));
+        assertTrue(
+            TestUtil.systemGetEnv("SNOWFLAKE_TEST_WAREHOUSE")
+                .equalsIgnoreCase(session.getWarehouse()));
+        try (Statement statement = con.createStatement()) {
+          // Set TIMESTAMP_OUTPUT_FORMAT (which is a session parameter) to check its value later
+          try {
+            statement.execute(
+                "alter session set TIMESTAMP_OUTPUT_FORMAT='YYYY-MM-DD HH24:MI:SS.FFTZH'");
+            statement.execute("create or replace table testtable1 (cola string, colb int)");
+            statement.execute(
+                "insert into testtable1 values ('row1', 1), ('row2', 2), ('row3', 3)");
+            try (ResultSet rs = statement.executeQuery("select * from testtable1")) {
+              assertEquals(3, getSizeOfResultSet(rs));
+              // Assert database, schema, and warehouse have the same values as before even though
+              // the select statement will return no parameters or metadata
+              assertTrue(
+                  TestUtil.systemGetEnv("SNOWFLAKE_TEST_SCHEMA").equalsIgnoreCase(con.getSchema()));
+              assertTrue(
+                  TestUtil.systemGetEnv("SNOWFLAKE_TEST_DATABASE")
+                      .equalsIgnoreCase(con.getCatalog()));
+              assertTrue(
+                  TestUtil.systemGetEnv("SNOWFLAKE_TEST_WAREHOUSE")
+                      .equalsIgnoreCase(session.getWarehouse()));
+              // Assert session parameter TIMESTAMP_OUTPUT_FORMAT has the same value as before the
+              // select statement
+              assertEquals(
+                  "YYYY-MM-DD HH24:MI:SS.FFTZH",
+                  session.getCommonParameters().get("TIMESTAMP_OUTPUT_FORMAT"));
+            }
+          } finally {
+            statement.execute("alter session unset TIMESTAMP_OUTPUT_FORMAT");
+            statement.execute("drop table if exists testtable1");
+          }
+        }
+      }
+    } finally {
+      try (Connection con = getSnowflakeAdminConnection();
+          Statement statement = con.createStatement()) {
+        statement.execute(
+            "alter account "
+                + TestUtil.systemGetEnv("SNOWFLAKE_TEST_ACCOUNT")
+                + " unset ENABLE_SNOW_654741_FOR_TESTING");
+      }
+    }
+  }
+
+  /**
+   * This tests that statement parameters are still used correctly when the HTAP optimization of
+   * removing all parameters is enabled.
+   *
+   * @throws SQLException
+   */
+  @Test
+  @ConditionalIgnoreRule.ConditionalIgnore(condition = RunningOnGithubAction.class)
+  public void testHTAPStatementParameterCaching() throws SQLException {
     // Set the HTAP test parameter to true
     try (Connection con = getSnowflakeAdminConnection()) {
       Statement statement = con.createStatement();
@@ -1578,37 +1740,34 @@ public class SnowflakeDriverLatestIT extends BaseJDBCTest {
               + TestUtil.systemGetEnv("SNOWFLAKE_TEST_ACCOUNT")
               + " set ENABLE_SNOW_654741_FOR_TESTING=true");
     }
-    // Create a normal connection and assert that database, schema, and warehouse have expected
-    // values
     Connection con = getConnection();
-    SFSession session = con.unwrap(SnowflakeConnectionV1.class).getSfSession();
-    assertTrue(TestUtil.systemGetEnv("SNOWFLAKE_TEST_SCHEMA").equalsIgnoreCase(con.getSchema()));
-    assertTrue(TestUtil.systemGetEnv("SNOWFLAKE_TEST_DATABASE").equalsIgnoreCase(con.getCatalog()));
-    assertTrue(
-        TestUtil.systemGetEnv("SNOWFLAKE_TEST_WAREHOUSE").equalsIgnoreCase(session.getWarehouse()));
     Statement statement = con.createStatement();
-    // Set TIMESTAMP_OUTPUT_FORMAT (which is a session parameter) to check its value later
-    statement.execute("alter session set TIMESTAMP_OUTPUT_FORMAT='YYYY-MM-DD HH24:MI:SS.FFTZH'");
-    statement.execute("create or replace table testtable1 (cola string, colb int)");
-    statement.execute("insert into testtable1 values ('row1', 1), ('row2', 2), ('row3', 3)");
-    ResultSet rs = statement.executeQuery("select * from testtable1");
-    assertEquals(3, getSizeOfResultSet(rs));
-    // Assert database, schema, and warehouse have the same values as before even though the select
-    // statement will
-    // return no parameters or metadata
-    assertTrue(TestUtil.systemGetEnv("SNOWFLAKE_TEST_SCHEMA").equalsIgnoreCase(con.getSchema()));
-    assertTrue(TestUtil.systemGetEnv("SNOWFLAKE_TEST_DATABASE").equalsIgnoreCase(con.getCatalog()));
-    assertTrue(
-        TestUtil.systemGetEnv("SNOWFLAKE_TEST_WAREHOUSE").equalsIgnoreCase(session.getWarehouse()));
-    // Assert session parameter TIMESTAMP_OUTPUT_FORMAT has the same value as before the select
-    // statement
-    assertEquals(
-        "YYYY-MM-DD HH24:MI:SS.FFTZH",
-        session.getCommonParameters().get("TIMESTAMP_OUTPUT_FORMAT"));
-    // cleanup
-    statement.execute("alter session unset TIMESTAMP_OUTPUT_FORMAT");
-    statement.execute("drop table testtable1");
-    rs.close();
+    // Set up a test table with time, date, and timestamp values
+    statement.execute("create or replace table timetable (t1 time, t2 timestamp, t3 date)");
+    statement.execute(
+        "insert into timetable values ('13:53:11', '2023-08-17 13:53:33', '2023-08-17')");
+    // Set statement- level parameters that will affect the output (set output format params)
+    statement
+        .unwrap(SnowflakeStatement.class)
+        .setParameter("TIME_OUTPUT_FORMAT", "HH12:MI:SS.FF AM");
+    statement.unwrap(SnowflakeStatement.class).setParameter("DATE_OUTPUT_FORMAT", "DD-MON-YYYY");
+    statement
+        .unwrap(SnowflakeStatement.class)
+        .setParameter("TIMESTAMP_OUTPUT_FORMAT", "YYYY-MM-DD\"T\"HH24:MI:SS");
+    ResultSet resultSet = statement.executeQuery("select * from timetable");
+    resultSet.next();
+    // Assert that the values match the format of the specified statement parameter output format
+    // values
+    assertEquals("01:53:11.000000000 PM", resultSet.getString(1));
+    assertEquals("2023-08-17T13:53:33", resultSet.getString(2));
+    assertEquals("17-Aug-2023", resultSet.getString(3));
+    // Set a different statement parameter value for DATE_OUTPUT_FORMAT
+    statement.unwrap(SnowflakeStatement.class).setParameter("DATE_OUTPUT_FORMAT", "MM/DD/YYYY");
+    resultSet = statement.executeQuery("select * from timetable");
+    resultSet.next();
+    // Verify it matches the new statement parameter specified output format
+    assertEquals("08/17/2023", resultSet.getString(3));
+    statement.execute("drop table if exists timetable");
     statement.close();
     con.close();
     // cleanup
