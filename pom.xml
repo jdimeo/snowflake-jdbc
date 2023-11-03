@@ -16,6 +16,17 @@
     <url>https://github.com/snowflakedb/snowflake-jdbc</url>
   </scm>
 
+  	<distributionManagement>
+  		<repository>
+    		<id>gitlab-maven</id>
+    		<url>https://gitlab.com/api/v4/projects/29651485/packages/maven</url>
+  		</repository>
+  		<snapshotRepository>
+    		<id>gitlab-maven</id>
+    		<url>https://gitlab.com/api/v4/projects/29651485/packages/maven</url>
+  		</snapshotRepository>
+	</distributionManagement>
+
   <properties>
     <arrow.version>10.0.1</arrow.version>
     <awssdk.version>1.12.327</awssdk.version>
